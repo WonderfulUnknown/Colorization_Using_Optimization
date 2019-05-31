@@ -6,7 +6,10 @@
 using namespace std;
 using namespace cv;
 
+#define Max 5000
 double Threshold = 0.01;
+int window_size = 1;//窗口半径
+
 Mat rgb2ntsc(Mat src)
 {
 	//输入rgb的mat型图
@@ -30,6 +33,67 @@ Mat rgb2ntsc(Mat src)
 		}
 	}
 	return dst;
+}
+
+void getColorExact(Mat colorIm,Mat ntscIm)
+{
+	int n, m, imgSize;
+	n = ntscIm.rows;
+	m = ntscIm.cols;
+	imgSize = n * m;
+	Mat indsM = Mat::zeros(n, m, CV_64F);//储存1-imgSize
+	for (int i = 0; i < n; i++)
+		for (int j = 0; j < m; j++)
+			indsM.at<double>(i, j) = (i + 1)*(j + 1);
+	int lbInds[Max];//存储所有colorIm中大于0的值的索引
+	int temp = 0;
+	for (int i = 0; i < colorIm.rows; i++)
+	{
+		for (int j = 0; j < colorIm.cols; j++)
+		{
+			if (colorIm.at<double>(i, j) > 0)
+				lbInds[temp++] = i * (j + 1);
+		}
+	}
+	int number;//需要选取的所有点数量
+	number = (2 * window_size + 1) * 2 * 2;
+	Mat col_inds = Mat::zeros((imgSize*number), 1, CV_64F);
+	Mat row_inds = Mat::zeros((imgSize*number), 1, CV_64F);
+	Mat vals = Mat::zeros(number, 1, CV_64F);
+	Mat gvals = Mat::zeros(1, number, CV_64F);
+
+	//==========interaction
+	int len = 0, consts_len = 0;
+	for (int j = 1; j < m; j++)
+	{
+		for (int i = 1; i < n; i++)
+		{
+			int tlen;
+			consts_len++;
+			if (!colorIm.at<double>(i, j))//如果没被上色，值为0
+			{
+				tlen = 0;
+				for (int x = max(1, i - window_size); x <= min(i + window_size, n); x++)
+				{
+					for (int y = max(1, j - window_size); y <= min(j + window_size, n); y++)
+					{
+						if (x != i || y != j)
+						{
+							len++;
+							tlen++;
+							//可能会越界，不知是否支持默认为1，后面考虑全部改为数组
+							row_inds.at<double>(len) = consts_len;
+							col_inds.at<double>(len) = indsM.at<double>(x, y);
+							gvals.at<double>(tlen) = ntscIm.at<Vec3f>(x, y)[0];//取灰度值
+						}
+					}
+				}
+				double t_val = ntscIm.at<Vec3f>(i, j)[0];
+				gvals.at<double>(tlen + 1) = t_val;
+				//int c_var = mean((gvals.at<double>))
+			}
+		}
+	}
 }
 
 int main()
@@ -72,6 +136,7 @@ int main()
 	for (int i = 0; i < YUV.rows; i++)
 		for (int j = 0; j < YUV.cols; j++)
 			YUV.at<Vec3f>(i, j)[0] = YIQ_gray.at<Vec3f>(i, j)[0];
+
 	waitKey(0);
 	return 0;
 }
