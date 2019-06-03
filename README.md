@@ -4,7 +4,7 @@
 
 ============
 
-彩色化灰度图是参考论文 [Levin, Lischinski & Weiss, 2004](http://www.cs.huji.ac.il/~yweiss/Colorization/colorization-siggraph04.pdf)在原网站给出了matlab版的代码，在目录matlab/origin中给出。同时在github上也找到了塔尔图大学的一个实现，在matlab/University of Tartu中。其中C++代码为本人的实现，其中加入了一些自己的改进。(未开始)
+彩色化灰度图是参考论文 [Levin, Lischinski & Weiss, 2004](http://www.cs.huji.ac.il/~yweiss/Colorization/colorization-siggraph04.pdf)在原网站给出了matlab版的代码，在目录matlab/origin中给出。同时在github上也找到了塔尔图大学的一个实现，在matlab/University of Tartu中。其中colorize.py为本人的在参考源码的基础上实现，并加入了一些自己的改进。
 
 ## 用法
 
