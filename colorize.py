@@ -3,6 +3,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
 import colorsys
 import cv2
+import matplotlib.pyplot as plt
 
 
 def yiq_to_rgb(y, i, q):
@@ -18,12 +19,31 @@ def yiq_to_rgb(y, i, q):
     return (r, g, b)
 
 
+def canny_edge(image):
+    blurred = cv2.GaussianBlur(image, (3, 3), 0)
+    gray = cv2.cvtColor(blurred, cv2.COLOR_RGB2GRAY)
+    # xgrad = cv.Sobel(gray, cv.CV_16SC1, 1, 0) #x方向梯度
+    # ygrad = cv.Sobel(gray, cv.CV_16SC1, 0, 1) #y方向梯度
+    edge_output = cv2.Canny(gray, 10, 30)
+    # cv2.imshow("Canny Edge", edge_output)
+    # dst = cv2.bitwise_and(image, image, mask= edge_output)
+    # cv2.imshow("Color Edge", dst)
+    # cv2.waitKey()
+    # return dst
+    return edge_output
+
+
 def colorization(original, marked, is_colored):
-    original = original.astype(float) / 255
-    marked = marked.astype(float) / 255
+    # original = original.astype(float) / 255
+    # marked = marked.astype(float) / 255
 
-    # is_colored = abs(original - marked).sum(2) > 0.01  # 得到上色点的位置
+    cv2.namedWindow("1")
+    cv2.imshow("1", original)
+    cv2.namedWindow("2")
+    cv2.imshow("2", marked)
 
+    # diff = abs(original - marked)
+    # is_colored = diff.sum(2) > 0.1  # 得到上色点的位置
     (Y, _, _) = colorsys.rgb_to_yiq(original[:, :, 0], original[:, :, 1], original[:, :, 2])  # 获取灰度值
     (_, I, Q) = colorsys.rgb_to_yiq(marked[:, :, 0], marked[:, :, 1], marked[:, :, 2])  # 获取I,Q分量
 
@@ -31,6 +51,14 @@ def colorization(original, marked, is_colored):
     YUV[:, :, 0] = Y
     YUV[:, :, 1] = I
     YUV[:, :, 2] = Q
+    #debug
+    (r, g, b) = yiq_to_rgb(YUV[:, :, 0], YUV[:, :, 1], YUV[:, :, 2])
+    temp = np.zeros(YUV.shape)
+    temp[:, :, 0] = r
+    temp[:, :, 1] = g
+    temp[:, :, 2] = b
+    cv2.namedWindow("4")
+    cv2.imshow("4", temp)
 
     n = YUV.shape[0]  # row
     m = YUV.shape[1]  # col
@@ -47,7 +75,6 @@ def colorization(original, marked, is_colored):
     value = np.zeros(all_number)
 
     length = 0  # 实际计算的点的个数+原图点的个数(因为在边缘不扩展不能用all_number)
-    # count = 0#代表在整张图像中的某个点
 
     # 计算图中的像素
     for j in range(m):
@@ -63,7 +90,7 @@ def colorization(original, marked, is_colored):
 
                         # 当前的像素位置不是[i,j]
                         if (ii != i or jj != j):
-                            row_index[length] = indices_matrix[i, j]  # count
+                            row_index[length] = indices_matrix[i, j]
                             col_index[length] = indices_matrix[ii, jj]
                             gray_value[window_index] = YUV[ii, jj, 0]
                             length += 1
@@ -93,28 +120,21 @@ def colorization(original, marked, is_colored):
                 value[curr_post:length] = -gray_value[0:window_index]
 
             # 记录当前的点
-            # row_index[length] = count
             row_index[length] = indices_matrix[i, j]
             col_index[length] = indices_matrix[i, j]
-            # debug
-            # print("count = ",count)
-            # print("indices_matrix[i,j] = ",indices_matrix[i,j])
             value[length] = 1
             length += 1
-            # count += 1
 
     # debug
     # print(length)
     # print(image_size)
     # print(all_number)
-    # print(count)
 
     # 舍弃不需要的值
     value = value[0:length]
     col_index = col_index[0:length]
     row_index = row_index[0:length]
 
-    # A = sparse.csr_matrix((value, (row_index, col_index)), (count, image_size))
     # 构建稀疏列矩阵
     A = csr_matrix((value, (row_index, col_index)), shape=(image_size, image_size))
     b = np.zeros((A.shape[0]))
@@ -141,30 +161,30 @@ def colorization(original, marked, is_colored):
     colorizedRGB[:, :, 1] = G
     colorizedRGB[:, :, 2] = B
 
-    cv2.namedWindow("colored")
-    cv2.imshow("colored", colorizedRGB)
-    cv2.waitKey(0)
+    # cv2.namedWindow("colored")
+    # cv2.imshow("colored", colorizedRGB)
+    # cv2.waitKey(0)
     return colorizedRGB
 
 
-src1 = cv2.imread("picture\example3.bmp")
-src2 = cv2.imread("picture\example3_marked.bmp")
-cv2.namedWindow("0")
-cv2.imshow("0", src2)
+src1 = cv2.imread("picture\example.bmp")
+src2 = cv2.imread("picture\example_marked.bmp")
+src1 = src1.astype(float) / 255
+src2 = src2.astype(float) / 255
 
 n = src1.shape[0]
 m = src1.shape[1]
 
 is_colored = abs(src1 - src2).sum(2) > 0.01  # 得到上色点的位置
-color_record = np.zeros((3,3), dtype=np.int64)
-#得到具体上色的色彩值
+color_record = np.zeros((3, 3), dtype=np.int8)
+# 得到具体上色的色彩值
 for j in range(m):
     for i in range(n):
-        if (is_colored[i,j]):
-            color_value = src2[i,j]
+        if (is_colored[i, j]):
+            color_value = src2[i, j]
             # 颜色没有被记录过,添加
-            # if (not (color_record == color_value).any()):
-            if (color_value not in color_record):
+            if (not (color_record == color_value).any()):
+                # if (color_value not in color_record):
                 temp = list(color_record)
                 temp.append(color_value)
                 color_record = np.array(temp)
@@ -181,19 +201,53 @@ x, y = src1.shape[0:2]
 down_img1 = cv2.resize(src1, (int(y / 2), int(x / 2)))
 down_img2 = cv2.resize(src2, (int(y / 2), int(x / 2)))
 
-is_colored = abs(down_img1 - down_img2).sum(2) > 0.01  # 得到上色点的位置
+down_is_colored = abs(down_img1 - down_img2).sum(2) > 0.01  # 得到上色点的位置
 n = down_img1.shape[0]
 m = down_img1.shape[1]
 
 for j in range(m):
     for i in range(n):
-        if (is_colored[i,j]):
-            color_value = down_img2[i,j]
-            # 如果颜色没有被记录过，说明颜色被修改，is_colored此位变为false
+        if (down_is_colored[i, j]):
+            color_value = down_img2[i, j]
+            # 如果颜色没有被记录过，说明颜色被修改，down_is_colored此位变为false(后面重新计算或者当前修改当做函数参数）
+            # 需要把这一位的像素变为原图缩放后这一位的像素
             # if (not (color_record == color_value).any()):
             if (color_value not in color_record):
-                is_colored[i,j] = False
+                down_img2[i, j] = down_img1[i, j]
+                # is_colored[i,j] = False
 
-colorization(down_img1, down_img2, is_colored)
+down_is_colored = abs(down_img1 - down_img2).sum(2) > 0.01
+# 测试其他时不运行，节约时间
+down_colored = colorization(down_img1, down_img2, down_is_colored)
 
-# cv2.waitKey(0)
+down_img1 = down_img1 * 255
+down_img1 = down_img1.astype(np.uint8)
+# down_img1 = np.array(down_img1,dtype='uint8')
+# 能处理很多cv2.imshow不能显示的图片,但貌似只能单独作为输出
+# plt.imshow(down_img1)
+# plt.show()
+
+down_img_edge = canny_edge(down_img1)
+for j in range(m):
+    for i in range(n):
+        # 如果是边缘，低分辨率不上色
+        if (down_img_edge[i, j]):
+            down_colored[i, j] = src1[i, j]
+
+down_colored = cv2.resize(down_colored, (int(y), int(x)))
+down_img_edge = cv2.resize(down_img_edge, (int(y), int(x)))
+
+n = down_colored.shape[0]
+m = down_colored.shape[1]
+
+for j in range(m):
+    for i in range(n):
+        if ((down_img_edge[i, j] > 0).any()):
+            is_colored[i][j] = False
+        else:
+            is_colored[i][j] = True
+
+dst = colorization(src1, down_colored, is_colored)
+cv2.namedWindow("3")
+cv2.imshow("3", dst)
+cv2.waitKey()
