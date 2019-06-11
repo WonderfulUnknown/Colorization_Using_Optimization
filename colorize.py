@@ -1,6 +1,6 @@
 import numpy as np
-from scipy import sparse
-from scipy.sparse import linalg
+from scipy.sparse import csr_matrix
+from scipy.sparse.linalg import spsolve
 import colorsys
 import cv2
 
@@ -16,127 +16,137 @@ def yiq_to_rgb(y, i, q):
     b[b > 1] = 1
     return (r, g, b)
 
-original = cv2.imread("picture\example.bmp")
-marked = cv2.imread("picture\example_marked.bmp")
+original = cv2.imread("picture\example3.bmp")
+marked = cv2.imread("picture\example3_marked.bmp")
+
+#problem!金字塔会使colorized保留涂鸦
+#金字塔导致像素模糊，使得涂鸦的颜色不一致.出现模糊
 
 # 图像金字塔
 # original = cv2.pyrDown(original)
 # marked = cv2.pyrDown(marked)
 
-# # 图像缩放
+# 图像缩放
 # x, y = original.shape[0:2]
 # original = cv2.resize(original, (int(y / 2), int(x / 2)))
-# # x, y = original.shape[0:2]
 # marked = cv2.resize(marked, (int(y / 2), int(x / 2)))
 
 original = original.astype(float)/255
 marked = marked.astype(float)/255
 
-isColored = abs(original - marked).sum(2) > 0.01
+is_colored = abs(original - marked).sum(2) > 0.01#得到上色点的位置
 
-(Y,_,_) = colorsys.rgb_to_yiq(original[:,:,0],original[:,:,1],original[:,:,2])
-(_,I,Q) = colorsys.rgb_to_yiq(marked[:,:,0],marked[:,:,1],marked[:,:,2])
+(Y,_,_) = colorsys.rgb_to_yiq(original[:,:,0],original[:,:,1],original[:,:,2])#获取灰度值
+(_,I,Q) = colorsys.rgb_to_yiq(marked[:,:,0],marked[:,:,1],marked[:,:,2])#获取I,Q分量
 
 YUV = np.zeros(original.shape)
 YUV[:,:,0] = Y
 YUV[:,:,1] = I
 YUV[:,:,2] = Q
 
-
-n = YUV.shape[0]
-m = YUV.shape[1]
+n = YUV.shape[0]#row
+m = YUV.shape[1]#col
 image_size = n*m
 
-indices_matrix = np.arange(image_size).reshape(n,m,order='F').copy()
+indices_matrix = np.arange(image_size).reshape(n,m,order='F').copy()#0-image_size n行m列 类FORTRAN 按列存储
 
-wd = 1
-nr_of_px_in_wd = (2*wd + 1)**2
-max_nr = image_size * nr_of_px_in_wd
+window_size = 1
+number = (2*window_size + 1)**2#周围需要选取点的数量
+all_number = image_size * number#一张图需要选取点的数量
 
-row_inds = np.zeros(max_nr, dtype=np.int64)
-col_inds = np.zeros(max_nr, dtype=np.int64)
-vals = np.zeros(max_nr)
+row_index = np.zeros(all_number, dtype=np.int64)
+col_index = np.zeros(all_number, dtype=np.int64)
+value = np.zeros(all_number)
 
-# ----------------------------- Interation ----------------------------------- #
+length = 0#实际计算的点的个数+原图点的个数(因为在边缘不扩展不能用all_number)
+# count = 0#代表在整张图像中的某个点
 
-length = 0
-pixel_nr = 0
-
-
-# iterate over pixels in the image
+#计算图中的像素
 for j in range(m):
     for i in range(n):
-
-        # If current pixel is not colored
-        if (not isColored[i,j]):
+        #像素未被上色
+        if (not is_colored[i,j]):
             window_index = 0
-            window_vals = np.zeros(nr_of_px_in_wd)
+            gray_value = np.zeros(number)
 
-            # Then iterate over pixels in the window around [i,j]
-            for ii in range(max(0, i-wd), min(i+wd+1,n)):
-                for jj in range(max(0, j-wd), min(j+wd+1, m)):
+            #在[i,j]周围的窗口循环计算
+            for ii in range(max(0, i-window_size), min(i+window_size+1,n)):#防止越界
+                for jj in range(max(0, j-window_size), min(j+window_size+1, m)):
 
-                    # Only if current pixel is not [i,j]
+                    #当前的像素位置不是[i,j]
                     if (ii != i or jj != j):
-                        row_inds[length] = pixel_nr
-                        col_inds[length] = indices_matrix[ii,jj]
-                        window_vals[window_index] = YUV[ii,jj,0]
+                        row_index[length] = indices_matrix[i,j]#count
+                        col_index[length] = indices_matrix[ii,jj]
+                        gray_value[window_index] = YUV[ii,jj,0]
                         length += 1
                         window_index += 1
 
-            center = YUV[i,j,0].copy()
-            window_vals[window_index] = center
-
-            variance = np.mean((window_vals[0:window_index+1] - np.mean(window_vals[0:window_index+1]))**2)
+            curr_value = YUV[i,j,0].copy()
+            gray_value[window_index] = curr_value
+            #计算像素[i，j]周围窗口的方差
+            std = gray_value[0:window_index+1] - np.mean(gray_value[0:window_index+1])
+            variance = np.mean(std**2)
+            #sigma过大会导致边界上色异常，过小使得上色有缺口
             sigma = variance * 0.6
 
-            # Indeed, magic
-            mgv = min(( window_vals[0:window_index+1] - center )**2)
-            if (sigma < ( -mgv / np.log(0.01 ))):
-                sigma = -mgv / np.log(0.01)
-            if (sigma < 0.000002):                                              # avoid dividing by 0
+            diff = gray_value[0:window_index] - curr_value
+            min_diff = min(diff**2)
+            #没懂源码为何如此写
+            if (sigma < ( -min_diff / np.log(0.01 ))):
+                sigma = -min_diff / np.log(0.01)
+            #避免sigma为0，导致后面除法异常
+            if (sigma < 0.000002):
                 sigma = 0.000002
+            #第二个权重函数
+            gray_value[0:window_index] = np.exp( -(diff**2) / sigma )
+            #权重和为1
+            gray_value[0:window_index] = gray_value[0:window_index] / np.sum(gray_value[0:window_index])
+            curr_post = length - window_index
+            value[curr_post:length] = -gray_value[0:window_index]
 
-            window_vals[0:window_index] = np.exp( -((window_vals[0:window_index] - center)**2) / sigma )
-            window_vals[0:window_index] = window_vals[0:window_index] / np.sum(window_vals[0:window_index])
-            vals[length-window_index:length] = -window_vals[0:window_index]
-
-        # Add the values for the current pixel
-        row_inds[length] = pixel_nr
-
-        col_inds[length] = indices_matrix[i,j]
-        vals[length] = 1
+        #记录当前的点
+        # row_index[length] = count
+        row_index[length] = indices_matrix[i,j]
+        col_index[length] = indices_matrix[i,j]
+        #debug
+        # print("count = ",count)
+        # print("indices_matrix[i,j] = ",indices_matrix[i,j])
+        value[length] = 1
         length += 1
-        pixel_nr += 1
+        # count += 1
 
-# ------------------------ After Iteration Process --------------------------- #
-vals = vals[0:length]
-col_inds = col_inds[0:length]
-row_inds = row_inds[0:length]
-# cv2.namedWindow("YUV")
-# cv2.imshow("YUV",YUV)
-# ------------------------------- Sparseness --------------------------------- #
-A = sparse.csr_matrix((vals, (row_inds, col_inds)), (pixel_nr, image_size))
+#debug
+# print(length)
+# print(image_size)
+# print(all_number)
+# print(count)
+
+#舍弃不需要的值
+value = value[0:length]
+col_index = col_index[0:length]
+row_index = row_index[0:length]
+
+# A = sparse.csr_matrix((value, (row_index, col_index)), (count, image_size))
+#构建稀疏列矩阵
+A = csr_matrix((value, (row_index, col_index)), shape=(image_size,image_size))
 b = np.zeros((A.shape[0]))
 colorized = np.zeros(YUV.shape)
 colorized[:,:,0] = YUV[:,:,0]
-cv2.namedWindow("YUV")
-cv2.imshow("YUV",YUV)
-# cv2.namedWindow("1")
-# cv2.imshow("1",colorized)
-#problem!金字塔会使colorized保留涂鸦
-#金字塔导致像素模糊，使得涂鸦的颜色不一致.出现模糊
-color_copy_for_nonzero = isColored.reshape(image_size,order='F').copy()
-colored_inds = np.nonzero(color_copy_for_nonzero)
+
+color_copy = is_colored.reshape(image_size,order='F').copy()
+colored_index = np.nonzero(color_copy)
 
 for t in [1,2]:
-    curIm = YUV[:,:,t].reshape(image_size,order='F').copy()
-    b[colored_inds] = curIm[colored_inds]
-    new_vals = linalg.spsolve(A, b)
-    colorized[:,:,t] = new_vals.reshape(n, m, order='F')
-# ------------------------------ Back to RGB --------------------------------- #
-cv2.namedWindow("1")
-cv2.imshow("1",colorized)
+    curr_image = YUV[:,:,t].reshape(image_size,order='F').copy()
+    b[colored_index] = curr_image[colored_index]
+    #求解稀疏线性方程组Ax=b
+    result = spsolve(A, b)
+    colorized[:,:,t] = result.reshape(n, m, order='F')
+
+# cv2.namedWindow("1")
+# cv2.imshow("1",colorized)
+
+#转回RGB
 (R, G, B) = yiq_to_rgb(colorized[:,:,0],colorized[:,:,1],colorized[:,:,2])
 colorizedRGB = np.zeros(colorized.shape)
 colorizedRGB[:,:,0] = R
